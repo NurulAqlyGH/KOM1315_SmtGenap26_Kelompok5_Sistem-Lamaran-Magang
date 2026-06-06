@@ -1,15 +1,20 @@
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
+import datetime
 from app.repositories.laporan_repository import LaporanRepository
+from app.repositories.logbook_repository import LogbookRepository
 from app.repositories.notifikasi_repository import NotifikasiRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.laporan_schema import LaporanCreate, LaporanUpdate, LaporanStatus
 from app.schemas.laporan_dosen_schema import LaporanPenilaianUpdate, LaporanRevisiDosenUpdate
 from app.services.email_service import kirim_email_notifikasi
+from app.models.laporan import Laporan
+from app.models.logbook import Logbook
 
 class LaporanService:
     def __init__(self, db: Session):
         self.repo = LaporanRepository(db)
+        self.logbook_repo = LogbookRepository(db)
         self.notif_repo = NotifikasiRepository(db)
         self.user_repo = UserRepository(db)
 
@@ -40,6 +45,49 @@ class LaporanService:
         """Ambil semua laporan yang dinilai oleh dosen tertentu"""
         return self.repo.get_by_dosen_id(dosen_id)
 
+    def inisialisasi_laporan(self, mahasiswa_id: int, lowongan_id: int):
+        """Inisialisasi laporan (Internship Record) dan Logbook kosong saat diterima."""
+        # 1. Cek apakah sudah ada
+        laporan_ada = self.repo.db.query(Laporan).filter(
+            Laporan.mahasiswa_id == mahasiswa_id,
+            Laporan.lowongan_id == lowongan_id
+        ).first()
+        
+        if laporan_ada:
+            return laporan_ada
+
+        # 2. Ambil data mahasiswa untuk mendapatkan dosen pembimbing default
+        mahasiswa = self.user_repo.get_by_id(mahasiswa_id)
+        dosen_id = getattr(mahasiswa, 'dosen_pembimbing_id', None)
+
+        # 3. Buat Laporan
+        laporan_data = {
+            "mahasiswa_id": mahasiswa_id,
+            "lowongan_id": lowongan_id,
+            "dosen_id": dosen_id,
+            "status": LaporanStatus.ONGOING
+        }
+        db_laporan = self.repo.create(laporan_data)
+
+        # 4. Buat Logbook kosong secara batch (misal 30 hari ke depan)
+        today = datetime.date.today()
+        logbooks_to_add = []
+        for i in range(30):
+            log_date = today + datetime.timedelta(days=i)
+            logbooks_to_add.append(Logbook(
+                laporan_id=db_laporan.laporan_id,
+                mahasiswa_id=mahasiswa_id,
+                dosen_id=dosen_id,
+                tanggal_log=log_date,
+                keterangan="",
+                jenis_kegiatan=""
+            ))
+        
+        self.repo.db.add_all(logbooks_to_add)
+        self.repo.db.commit()
+        
+        return db_laporan
+
     def tambah_laporan(self, data: LaporanCreate, user_id: int):
         """Buat laporan baru"""
         data_dict = data.model_dump()
@@ -58,7 +106,7 @@ class LaporanService:
             
         return self.repo.update(laporan_id, data.model_dump(exclude_unset=True))
 
-    async def ubah_nilai_laporan(self, laporan_id: int, data: LaporanPenilaianUpdate, dosen_id: int):
+    async def ubah_nilai_laporan(self, laporan_id: int, data: LaporanPenilaianUpdate, dosen_id: int, background_tasks: BackgroundTasks):
         """Update nilai laporan oleh dosen (dengan optional catatan)"""
         laporan = self.repo.get_by_id(laporan_id)
         if not laporan:
@@ -87,7 +135,7 @@ class LaporanService:
                 "target_url": f"/mahasiswa/laporan/{laporan_id}"
             })
 
-            # 2. Email ke mahasiswa
+            # 2. Email ke mahasiswa (BackgroundTasks)
             pesan_email = f"""
             <html>
             <body>
@@ -101,14 +149,11 @@ class LaporanService:
             </body>
             </html>
             """
-            try:
-                await kirim_email_notifikasi(mahasiswa.email, "Hasil Penilaian Laporan Magang", pesan_email)
-            except Exception as e:
-                print(f"Gagal kirim email ke mahasiswa {mahasiswa.email}: {e}")
+            background_tasks.add_task(kirim_email_notifikasi, mahasiswa.email, "Hasil Penilaian Laporan Magang", pesan_email)
 
         return updated_laporan
 
-    async def ubah_catatan_revisi_dosen(self, laporan_id: int, data: LaporanRevisiDosenUpdate, dosen_id: int):
+    async def ubah_catatan_revisi_dosen(self, laporan_id: int, data: LaporanRevisiDosenUpdate, dosen_id: int, background_tasks: BackgroundTasks):
         """Update catatan revisi oleh dosen ketika menolak laporan"""
         laporan = self.repo.get_by_id(laporan_id)
         if not laporan:
@@ -145,10 +190,7 @@ class LaporanService:
             </body>
             </html>
             """
-            try:
-                await kirim_email_notifikasi(mahasiswa.email, "Revisi Laporan Magang", pesan_email)
-            except Exception as e:
-                print(f"Gagal kirim email ke mahasiswa {mahasiswa.email}: {e}")
+            background_tasks.add_task(kirim_email_notifikasi, mahasiswa.email, "Revisi Laporan Magang", pesan_email)
 
         return updated_laporan
 

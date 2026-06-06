@@ -1,33 +1,55 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.models.laporan import Laporan
+from app.schemas.laporan_schema import LaporanStatus
 
 class LaporanRepository:
     def __init__(self, db: Session):
         self.db = db
 
     def get_all(self):
-        """Ambil semua laporan"""
-        return self.db.query(Laporan).all()
+        """Ambil semua laporan dengan logbooks, lowongan, dan mahasiswa"""
+        return self.db.query(Laporan).options(
+            joinedload(Laporan.logbooks),
+            joinedload(Laporan.lowongan),
+            joinedload(Laporan.mahasiswa)
+        ).all()
 
     def get_by_id(self, laporan_id: int):
-        """Ambil laporan berdasarkan ID"""
-        return self.db.query(Laporan).filter(Laporan.laporan_id == laporan_id).first()
+        """Ambil laporan berdasarkan ID dengan logbooks, lowongan, dan mahasiswa"""
+        return self.db.query(Laporan).options(
+            joinedload(Laporan.logbooks),
+            joinedload(Laporan.lowongan),
+            joinedload(Laporan.mahasiswa)
+        ).filter(Laporan.laporan_id == laporan_id).first()
 
     def get_by_mahasiswa_id(self, mahasiswa_id: int):
-        """Ambil semua laporan milik mahasiswa tertentu"""
-        return self.db.query(Laporan).filter(Laporan.mahasiswa_id == mahasiswa_id).all()
+        """Ambil semua laporan milik mahasiswa tertentu dengan logbooks, lowongan, dan mahasiswa"""
+        return self.db.query(Laporan).options(
+            joinedload(Laporan.logbooks),
+            joinedload(Laporan.lowongan),
+            joinedload(Laporan.mahasiswa)
+        ).filter(Laporan.mahasiswa_id == mahasiswa_id).all()
 
     def get_pending_laporan(self):
         """Ambil semua laporan yang masih pending (belum dinilai)"""
-        return self.db.query(Laporan).filter(Laporan.status == "Pending").all()
+        return self.db.query(Laporan).options(
+            joinedload(Laporan.mahasiswa),
+            joinedload(Laporan.lowongan)
+        ).filter(Laporan.status == LaporanStatus.PENDING).all()
 
     def get_by_status(self, status: str):
         """Ambil laporan berdasarkan status"""
-        return self.db.query(Laporan).filter(Laporan.status == status).all()
+        return self.db.query(Laporan).options(
+            joinedload(Laporan.mahasiswa),
+            joinedload(Laporan.lowongan)
+        ).filter(Laporan.status == status).all()
 
     def get_by_dosen_id(self, dosen_id: int):
         """Ambil semua laporan yang dinilai oleh dosen tertentu"""
-        return self.db.query(Laporan).filter(Laporan.dosen_id == dosen_id).all()
+        return self.db.query(Laporan).options(
+            joinedload(Laporan.mahasiswa),
+            joinedload(Laporan.lowongan)
+        ).filter(Laporan.dosen_id == dosen_id).all()
 
     def create(self, data_dict: dict):
         """Buat laporan baru"""

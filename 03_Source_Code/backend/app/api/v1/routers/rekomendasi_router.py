@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
+from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -7,7 +7,9 @@ from app.schemas.rekomendasi_schemas import SuratRekomendasiCreate, SuratRekomen
 from app.services.rekomendasi_service import SuratRekomendasiService
 from app.api.dependencies import get_rekomendasi_service
 from app.core.security import RoleChecker
-from app.digital_signature.service import DigitalSignatureService
+from app.core.storage import storage_client
+from digital_signature.digi_sing import attach_signature_to_url
+import asyncio
 
 router = APIRouter(
     prefix="/surat-rekomendasi",
@@ -20,6 +22,7 @@ semua_user = RoleChecker(["mahasiswa", "dosen", "staff"])
 
 @router.post("/", response_model=SuratRekomendasiResponse, status_code=201)
 async def ajukan_surat(
+    background_tasks: BackgroundTasks,
     dosen_id: int = Form(...),
     file: UploadFile = File(...),
     current_user: dict = Depends(hanya_mahasiswa),
@@ -30,16 +33,20 @@ async def ajukan_surat(
     """
     # 1. Upload ke Supabase
     contents = await file.read()
-    public_url = storage_client.upload(
+    public_url = await asyncio.to_thread(
+        storage_client.upload,
         file_data=contents,
         file_name=file.filename,
         content_type=file.content_type,
         folder="surat_rekomendasi"
     )
 
-    # 2. Proses ke Service
+    # 2. Tambahkan tanda tangan digital sederhana ke URL dokumen
+    public_url = attach_signature_to_url(public_url, contents, current_user["username"])
+
+    # 3. Proses ke Service
     data = SuratRekomendasiCreate(dosen_id=dosen_id)
-    return await service.ajukan_surat(data, current_user["user_id"], public_url)
+    return await service.ajukan_surat(data, current_user["user_id"], public_url, background_tasks)
 
 @router.get("/mahasiswa/saya", response_model=List[SuratRekomendasiResponse])
 def lihat_surat_saya(
@@ -69,6 +76,7 @@ def detail_surat(
 @router.patch("/{surat_id}/proses", response_model=SuratRekomendasiResponse)
 async def proses_surat_dosen(
     surat_id: int,
+    background_tasks: BackgroundTasks,
     status: SuratRekomendasiStatus = Form(...), # Menggunakan Enum langsung
     file_signed: Optional[UploadFile] = File(None),
     current_user: dict = Depends(hanya_dosen),
@@ -81,10 +89,15 @@ async def proses_surat_dosen(
     if status == SuratRekomendasiStatus.APPROVED:
         if not file_signed:
             raise HTTPException(status_code=400, detail="Jika disetujui, file bertanda tangan wajib diunggah.")
-
-        signed_url = await DigitalSignatureService().validate_and_upload(
-            file_signed,
+        
+        contents = await file_signed.read()
+        signed_url = await asyncio.to_thread(
+            storage_client.upload,
+            file_data=contents,
+            file_name=file_signed.filename,
+            content_type=file_signed.content_type,
             folder="surat_rekomendasi"
         )
+        signed_url = attach_signature_to_url(signed_url, contents, current_user["username"])
 
-    return await service.proses_surat_oleh_dosen(surat_id, status, current_user["user_id"], signed_url)
+    return await service.proses_surat_oleh_dosen(surat_id, status, current_user["user_id"], signed_url, background_tasks)

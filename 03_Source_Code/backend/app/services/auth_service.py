@@ -9,7 +9,7 @@ from app.schemas.user_schema import UserCreate
 from app.core.config import settings
 
 # --- IMPORT DARI SECURITY.PY ---
-from app.core.security import get_password_hash, verifikasi_password, buat_access_token
+from app.core.security import get_password_hash, verifikasi_password, buat_access_token, get_jwt_secret_key
 
 # Import dari email_service untuk fungsi lupa password
 from app.services.email_service import kirim_email_reset_password 
@@ -28,18 +28,14 @@ class AuthService:
         hashed_pwd = get_password_hash(user_data.password)
         return self.repo.create(user_data, hashed_pwd)
 
-    def login_user(self, username_input: str, password_input: str):
-        user = (
-            self.repo.get_by_username(username_input)
-            or self.repo.get_by_email(username_input)
-            or self.repo.get_by_nim(username_input)
-            or self.repo.get_by_nip(username_input)
-        )
+    def login_user(self, identifier: str, password_input: str):
+        # Cari berdasarkan username atau email
+        user = self.repo.get_by_username(identifier) or self.repo.get_by_email(identifier)
         
         if not user or not verifikasi_password(password_input, user.password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Username, email, NIM/NIP, atau password salah",
+                detail="Username atau password salah",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
@@ -49,7 +45,16 @@ class AuthService:
             "access_token": access_token,
             "token_type": "bearer",
             "role": user.role.value,
-            "user_id": user.user_id
+            "user_id": user.user_id,
+            "user": {
+                "user_id": user.user_id,
+                "username": user.username,
+                "nama": user.nama,
+                "role": user.role.value,
+                "email": user.email,
+                "nim": getattr(user, 'nim', None),
+                "nip": getattr(user, 'nip', None)
+            }
         }
 
     def ubah_password(self, username_sekarang: str, data_password):
@@ -81,7 +86,7 @@ class AuthService:
 
     def reset_password(self, data_reset):
         try:
-            payload = jwt.decode(data_reset.token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            payload = jwt.decode(data_reset.token, get_jwt_secret_key(), algorithms=[settings.ALGORITHM])
             username: str = payload.get("sub")
             token_type: str = payload.get("type")
             

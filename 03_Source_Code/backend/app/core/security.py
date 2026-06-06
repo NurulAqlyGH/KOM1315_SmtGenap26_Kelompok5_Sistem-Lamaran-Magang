@@ -13,7 +13,7 @@ from app.core.config import settings
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
-def _jwt_secret_key() -> str:
+def get_jwt_secret_key() -> str:
     secret_key = str(settings.SECRET_KEY)
     if len(secret_key.encode("utf-8")) < 32:
         return hashlib.sha256(secret_key.encode("utf-8")).hexdigest()
@@ -37,7 +37,7 @@ def buat_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> 
         expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, _jwt_secret_key(), algorithm=settings.ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, get_jwt_secret_key(), algorithm=settings.ALGORITHM)
     return encoded_jwt
 
 # --- FUNGSI DEPENDENCY (AUTENTIKASI) ---
@@ -49,7 +49,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, _jwt_secret_key(), algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(token, get_jwt_secret_key(), algorithms=[settings.ALGORITHM])
         
         #Ekstrak id dari token JWT
         username: str = payload.get("sub")
@@ -70,10 +70,11 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 class RoleChecker:
     """Class untuk membatasi akses endpoint berdasarkan role."""
     def __init__(self, allowed_roles: list):
-        self.allowed_roles = allowed_roles
+        self.allowed_roles = [role.lower() for role in allowed_roles]
 
     def __call__(self, current_user: dict = Depends(get_current_user)):
-        if current_user["role"] not in self.allowed_roles:
+        user_role = str(current_user["role"]).lower()
+        if user_role not in self.allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Akses ditolak. Endpoint ini hanya diperuntukkan bagi role: {', '.join(self.allowed_roles)}"

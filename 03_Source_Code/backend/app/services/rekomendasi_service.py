@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 from app.repositories.rekomendasi_repository import SuratRekomendasiRepository
 from app.repositories.notifikasi_repository import NotifikasiRepository
 from app.repositories.user_repository import UserRepository
@@ -12,32 +12,41 @@ class SuratRekomendasiService:
         self.notif_repo = NotifikasiRepository(db)
         self.user_repo = UserRepository(db)
 
-    async def ajukan_surat(self, data: SuratRekomendasiCreate, mahasiswa_id: int, public_url: str):
+    async def ajukan_surat(self, data: SuratRekomendasiCreate, mahasiswa_id: int, public_url: str, background_tasks: BackgroundTasks):
         """
         Alur: Mahasiswa upload surat -> sistem notif ke dosen (sistem + email)
         """
-        # 1. Simpan data surat
+        # 1. Ambil data dosen pembimbing default jika tidak dikirim dari FE
+        dosen_id = data.dosen_id
+        if not dosen_id:
+            mahasiswa = self.user_repo.get_by_id(mahasiswa_id)
+            dosen_id = getattr(mahasiswa, 'dosen_pembimbing_id', None)
+            
+        if not dosen_id:
+            raise HTTPException(status_code=400, detail="Dosen pembimbing belum ditentukan untuk profil Anda.")
+
+        # 2. Simpan data surat
         data_dict = {
             "mahasiswa_id": mahasiswa_id,
-            "dosen_id": data.dosen_id,
+            "dosen_id": dosen_id,
             "dokumen_surat": public_url,
             "status_surat": SuratRekomendasiStatus.PENDING
         }
         db_surat = self.repo.create(data_dict)
 
-        # 2. Ambil data dosen & mahasiswa untuk notifikasi
-        dosen = self.user_repo.get_by_id(data.dosen_id)
+        # 3. Ambil data dosen & mahasiswa untuk notifikasi
+        dosen = self.user_repo.get_by_id(dosen_id)
         mahasiswa = self.user_repo.get_by_id(mahasiswa_id)
 
         if dosen:
-            # 3. Kirim notifikasi sistem ke dosen
+            # 4. Kirim notifikasi sistem ke dosen
             self.notif_repo.create({
                 "user_id": dosen.user_id,
                 "isi_notifikasi": f"Mahasiswa {mahasiswa.nama} mengajukan permohonan surat rekomendasi.",
                 "target_url": f"/dosen/surat-rekomendasi/{db_surat.surat_id}"
             })
 
-            # 4. Kirim email ke dosen
+            # 5. Kirim email ke dosen (BackgroundTasks)
             pesan_email = f"""
             <html>
             <body>
@@ -48,14 +57,11 @@ class SuratRekomendasiService:
             </body>
             </html>
             """
-            try:
-                await kirim_email_notifikasi(dosen.email, "Permohonan Surat Rekomendasi Baru", pesan_email)
-            except Exception as e:
-                print(f"Gagal kirim email: {e}")
+            background_tasks.add_task(kirim_email_notifikasi, dosen.email, "Permohonan Surat Rekomendasi Baru", pesan_email)
 
         return db_surat
 
-    async def proses_surat_oleh_dosen(self, surat_id: int, status: SuratRekomendasiStatus, dosen_id: int, signed_url: str = None):
+    async def proses_surat_oleh_dosen(self, surat_id: int, status: SuratRekomendasiStatus, dosen_id: int, signed_url: str = None, background_tasks: BackgroundTasks = None):
         """
         Alur: Dosen tolak/setujui surat -> jika setuju upload surat bertanda tangan -> notif ke mahasiswa
         """
@@ -83,7 +89,7 @@ class SuratRekomendasiService:
                 "target_url": "/mahasiswa/surat-rekomendasi"
             })
 
-            # 2. Email ke mahasiswa
+            # 2. Email ke mahasiswa (BackgroundTasks)
             pesan_email = f"""
             <html>
             <body>
@@ -94,10 +100,13 @@ class SuratRekomendasiService:
             </body>
             </html>
             """
-            try:
-                await kirim_email_notifikasi(mahasiswa.email, f"Surat Rekomendasi {status_teks}", pesan_email)
-            except Exception as e:
-                print(f"Gagal kirim email: {e}")
+            if background_tasks:
+                background_tasks.add_task(kirim_email_notifikasi, mahasiswa.email, f"Surat Rekomendasi {status_teks}", pesan_email)
+            else:
+                try:
+                    await kirim_email_notifikasi(mahasiswa.email, f"Surat Rekomendasi {status_teks}", pesan_email)
+                except Exception as e:
+                    print(f"Gagal kirim email: {e}")
 
         return updated_surat
 
@@ -109,6 +118,9 @@ class SuratRekomendasiService:
 
     def ambil_detail_surat(self, surat_id: int, user_id: int):
         surat = self.repo.get_by_id(surat_id)
-        if not surat or (surat.mahasiswa_id != user_id and surat.dosen_id != user_id):
+        if not surat:
+            raise HTTPException(status_code=404, detail="Data surat tidak ditemukan")
+            
+        if (surat.mahasiswa_id != user_id and surat.dosen_id != user_id):
              raise HTTPException(status_code=403, detail="Akses ditolak.")
         return surat

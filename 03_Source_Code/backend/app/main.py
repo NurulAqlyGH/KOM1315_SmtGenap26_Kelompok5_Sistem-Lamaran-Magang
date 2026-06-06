@@ -1,18 +1,17 @@
-import os
+import sys
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from app.api.v1.routers import lowongan_router
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.api.v1.routers import lowongan_router, user_router, auth_router, pendaftaran_router, laporan_router, logbook_router, rekomendasi_router, notifikasi_router
+from app.core.rate_limit import RateLimitMiddleware
 from app.db.database import engine
 from app.models import Base
-from app.api.v1.routers import auth_router
-from app.api.v1.routers import pendaftaran_router
-from app.api.v1.routers import laporan_router
-from app.api.v1.routers import logbook_router
-from app.api.v1.routers import rekomendasi_router
-from app.api.v1.routers import digital_signature_router
-from app.api.v1.routers import notifikasi_router
-
 
 app = FastAPI(
     title="Sistem Informasi Magang IPB API",
@@ -20,31 +19,26 @@ app = FastAPI(
     version="1.0.0"
 )
 
-
 #Daftarkan CORSMiddleware 
 origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # Daftar origin yang diizinkan
-    allow_credentials=True,      # Mengizinkan pengiriman kredensial (seperti cookies atau header Authorization HTTP)
-    allow_methods=["*"],         # Mengizinkan semua HTTP Method (GET, POST, PUT, DELETE, PATCH, OPTIONS)
-    allow_headers=["*"],         # Mengizinkan semua header
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+app.add_middleware(RateLimitMiddleware)
 
 # Mendaftarkan router
 app.include_router(lowongan_router.router, prefix="/api/v1")
+app.include_router(user_router.router, prefix="/api/v1")
 app.include_router(auth_router.router, prefix="/api/v1")
 app.include_router(pendaftaran_router.router, prefix="/api/v1")
 app.include_router(laporan_router.router, prefix="/api/v1")
 app.include_router(logbook_router.router, prefix="/api/v1")
 app.include_router(rekomendasi_router.router, prefix="/api/v1")
-app.include_router(digital_signature_router.router, prefix="/api/v1")
 app.include_router(notifikasi_router.router, prefix="/api/v1")
-
-# Static files for local upload fallback
-uploads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'uploads')
-os.makedirs(uploads_dir, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 @app.get("/")
 def root():

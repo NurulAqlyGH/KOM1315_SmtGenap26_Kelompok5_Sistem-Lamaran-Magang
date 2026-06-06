@@ -20,17 +20,14 @@ class UserRepository:
     def get_by_email(self, email: str):
         return self.db.query(User).filter(User.email == email).first()
 
-    def get_by_nim(self, nim: str):
-        return self.db.query(Mahasiswa).filter(Mahasiswa.nim == nim).first()
-
-    def get_by_nip(self, nip: str):
-        staff = self.db.query(Staff).filter(Staff.nip == nip).first()
-        if staff:
-            return staff
-        return self.db.query(Dosen).filter(Dosen.nip == nip).first()
-
     def get_all_staff(self):
         return self.db.query(Staff).all()
+
+    def get_all_dosen(self):
+        return self.db.query(Dosen).all()
+
+    def get_mahasiswa_bimbingan(self, dosen_id: int):
+        return self.db.query(Mahasiswa).filter(Mahasiswa.dosen_pembimbing_id == dosen_id).all()
 
     # 2. UBAH FUNGSI CREATE
     def create(self, user_data: UserCreate, hashed_password: str):

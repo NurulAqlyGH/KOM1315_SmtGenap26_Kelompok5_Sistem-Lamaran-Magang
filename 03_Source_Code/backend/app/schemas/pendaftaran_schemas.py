@@ -2,13 +2,15 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from datetime import date
 from enum import Enum
+from app.schemas.user_schema import MahasiswaResponse
+from app.schemas.lowongan_schema import LowonganResponse
 
 class PendaftaranStatus(str, Enum):
-    PENDING = "Pending Review"
-    REVIEW = "Under Review"
-    SELEKSI = "Tahap Seleksi"
-    ACCEPTED = "Accepted"
-    REJECTED = "Rejected"
+    PENDING = "PENDING"
+    REVIEW = "REVIEW"
+    SELEKSI = "SELEKSI"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
 
 class PendaftaranBase(BaseModel):
     dokumen_cv: str
@@ -30,5 +32,7 @@ class PendaftaranResponse(PendaftaranBase):
     lowongan_id: int
     tanggal_daftar: date
     status_seleksi: PendaftaranStatus
+    mahasiswa: Optional[MahasiswaResponse] = None
+    lowongan: Optional[LowonganResponse] = None
 
     model_config = ConfigDict(from_attributes=True)
